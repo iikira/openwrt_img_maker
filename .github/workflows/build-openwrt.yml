@@ -94,7 +94,17 @@ jobs:
           sudo partx -u "$LOOP" || true
 
           # 文件系统检测与同步
+          # e2fsck 退出码: 0=无错误 1=已修复错误 2=已修复需重启, 均视为成功;
+          # 退出码 >=4 才是真正异常, 单独捕获判断。
+          set +e
           sudo e2fsck -f -y "${LOOP}p2"
+          RC=$?
+          set -e
+          if [ "$RC" -ge 4 ]; then
+            echo "e2fsck 失败, 退出码 $RC"
+            sudo losetup -d "$LOOP"
+            exit 1
+          fi
           sudo resize2fs "${LOOP}p2"
 
           # 卸载

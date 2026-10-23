@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: OpenWrt 版本号 (例: 25.12.6)
+        description: 'OpenWrt 版本号 (例: 25.12.6)'
         required: true
         default: '25.12.6'
       size:
-        description: 扩容大小 (MB)
+        description: '扩容大小 (MB)'
         required: true
         default: '1024'
       mirror:
-        description: 下载镜像源
+        description: '下载镜像源'
         type: choice
         required: true
         default: 'https://mirrors.ustc.edu.cn/openwrt'

@@ -83,19 +83,8 @@ jobs:
           fi
 
           # 用 fdisk 删除并重建第二分区, 保留起点扇区, 拒绝移除签名
-          # 顺序: d 2 -> n 2 -> 起点扇区 -> 默认结束(末尾) -> N(不移除签名) -> w
-          sudo fdisk "$LOOP" <<EOF
-p
-d
-2
-n
-p
-2
-${START}
-
-N
-w
-EOF
+          # 顺序: p -> d 2 -> n p 2 -> 起点扇区 -> 默认结束(末尾) -> N(不移除签名) -> w
+          printf 'p\nd\n2\nn\np\n2\n%s\n\nN\nw\n' "$START" | sudo fdisk "$LOOP"
 
           # 更新分区表
           sudo partx -u "${LOOP}p2" || true
@@ -128,20 +117,21 @@ EOF
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="v${{ steps.vars.outputs.version }}"
+          NOTES_FILE="$(mktemp)"
+          {
+            printf 'OpenWrt %s x86-64 ext4-combined 镜像，扩容 %sMB。\n\n' "${{ steps.vars.outputs.version }}" "${{ steps.vars.outputs.size }}"
+            printf -- '- 架构: x86-64\n'
+            printf -- '- 版本: %s\n' "${{ steps.vars.outputs.version }}"
+            printf -- '- 扩容: %sMB\n' "${{ steps.vars.outputs.size }}"
+            printf -- '- 下载源: %s\n\n' "${{ github.event.inputs.mirror }}"
+            printf '文件: %s\n\n' "${{ steps.vars.outputs.out }}"
+            printf '使用方法: 解压后写入磁盘/U盘。\n'
+            printf '```\n'
+            printf 'gzip -d %s\n' "${{ steps.vars.outputs.out }}"
+            printf 'dd if=%s of=/dev/sdX bs=1M\n' "${{ steps.vars.outputs.file }}"
+            printf '```\n'
+          } > "$NOTES_FILE"
           gh release create "$TAG" \
             "${{ steps.vars.outputs.out }}" \
             --title "OpenWrt ${{ steps.vars.outputs.version }} (x86-64, +${{ steps.vars.outputs.size }}MB)" \
-            --notes "OpenWrt ${{ steps.vars.outputs.version }} x86-64 ext4-combined 镜像，扩容 ${{ steps.vars.outputs.size }}MB。
-
-          - 架构: x86-64
-          - 版本: ${{ steps.vars.outputs.version }}
-          - 扩容: ${{ steps.vars.outputs.size }}MB
-          - 下载源: ${{ github.event.inputs.mirror }}
-
-          文件: \`${{ steps.vars.outputs.out }}\`
-
-          使用方法: 解压后写入磁盘/U盘。
-          \`\`\`
-          gzip -d ${{ steps.vars.outputs.out }}
-          dd if=${{ steps.vars.outputs.file }} of=/dev/sdX bs=1M
-          \`\`\`"
+            --notes-file "$NOTES_FILE"

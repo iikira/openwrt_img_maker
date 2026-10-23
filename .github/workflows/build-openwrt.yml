@@ -23,10 +23,16 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # 固定 runner 版本, 避免 ubuntu-latest 随 runner 更新导致
+    # fdisk/util-linux 行为变化 (util-linux 2.37, fdisk 已验证)。
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
+      - name: Checkout
+        # gh release 需要本地 git 仓库来推断 owner/repo
+        uses: actions/checkout@v4
+
       - name: Set variables
         id: vars
         run: |
@@ -51,6 +57,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y qemu-utils util-linux gzip e2fsprogs jq
+          echo "已安装关键工具版本:"
+          dpkg-query -W util-linux e2fsprogs qemu-utils
 
       - name: Download image
         run: |

@@ -82,9 +82,12 @@ jobs:
             exit 1
           fi
 
-          # 用 fdisk 删除并重建第二分区, 保留起点扇区, 拒绝移除签名
-          # 顺序: p -> d 2 -> n p 2 -> 起点扇区 -> 默认结束(末尾) -> N(不移除签名) -> w
-          printf 'p\nd\n2\nn\np\n2\n%s\n\nN\nw\n' "$START" | sudo fdisk "$LOOP"
+          # 用 fdisk 删除并重建第二分区, 保留起点扇区
+          # 顺序: p -> d 2 -> n p 2 -> 起点扇区 -> 默认结束(末尾) -> w
+          # 注意: 新版 util-linux fdisk 删除分区2时的 ext4 签名提示仅是信息性,
+          # 重建使用相同起点扇区会保留文件系统签名, 无需单独应答 N。
+          # fdisk 重读分区表在 loop 设备上常返回非零, 用 partx/partprobe 兜底更新。
+          printf 'p\nd\n2\nn\np\n2\n%s\n\nw\n' "$START" | sudo fdisk "$LOOP" || true
 
           # 更新分区表
           sudo partx -u "${LOOP}p2" || true

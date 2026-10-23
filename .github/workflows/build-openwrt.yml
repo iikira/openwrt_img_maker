@@ -1,0 +1,147 @@
+name: Build OpenWrt Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: OpenWrt 版本号 (例: 25.12.6)
+        required: true
+        default: '25.12.6'
+      size:
+        description: 扩容大小 (MB)
+        required: true
+        default: '1024'
+      mirror:
+        description: 下载镜像源
+        type: choice
+        required: true
+        default: 'https://mirrors.ustc.edu.cn/openwrt'
+        options:
+          - 'https://mirrors.ustc.edu.cn/openwrt'
+          - 'https://mirrors.tuna.tsinghua.edu.cn/openwrt'
+          - 'https://downloads.openwrt.org'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Set variables
+        id: vars
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          SIZE="${{ github.event.inputs.size }}"
+          MIRROR="${{ github.event.inputs.mirror }}"
+          # 版本号中的点，用于镜像路径 (24.10.1 -> 24.10.1)
+          BASE="${VERSION}"
+          FILE="openwrt-${BASE}-x86-64-generic-ext4-combined.img"
+          OUT="openwrt-${BASE}-x86-64-generic-ext4-combined-resized.img.gz"
+          URL="${MIRROR}/releases/${BASE}/targets/x86/64/${FILE}.gz"
+          {
+            echo "version=${VERSION}"
+            echo "base=${BASE}"
+            echo "file=${FILE}"
+            echo "out=${OUT}"
+            echo "url=${URL}"
+            echo "size=${SIZE}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-utils util-linux gzip e2fsprogs jq
+
+      - name: Download image
+        run: |
+          curl -fL -o "${{ steps.vars.outputs.file }}.gz" "${{ steps.vars.outputs.url }}"
+          gzip -d "${{ steps.vars.outputs.file }}.gz"
+          ls -lh "${{ steps.vars.outputs.file }}"
+
+      - name: Resize image
+        run: |
+          qemu-img resize "${{ steps.vars.outputs.file }}" +${{ steps.vars.outputs.size }}M
+
+      - name: Expand root partition
+        run: |
+          set -euo pipefail
+          IMG="${{ steps.vars.outputs.file }}"
+
+          # 挂载镜像到 loop 设备
+          LOOP=$(losetup -f --show "$IMG")
+          echo "LOOP=$LOOP"
+          # 加载分区信息
+          sudo partx -a "$LOOP" || true
+
+          # 用 sfdisk JSON 解析第二分区 (rootfs) 的起始扇区, 避免硬编码
+          START=$(sudo sfdisk -d "$LOOP" --json | jq -r '.partitiontable.partitions[1].start')
+          echo "Partition 2 start sector: $START"
+          if [ -z "$START" ] || [ "$START" = "null" ]; then
+            echo "无法获取第二分区起点扇区"
+            sudo losetup -d "$LOOP"
+            exit 1
+          fi
+
+          # 用 fdisk 删除并重建第二分区, 保留起点扇区, 拒绝移除签名
+          # 顺序: d 2 -> n 2 -> 起点扇区 -> 默认结束(末尾) -> N(不移除签名) -> w
+          sudo fdisk "$LOOP" <<EOF
+p
+d
+2
+n
+p
+2
+${START}
+
+N
+w
+EOF
+
+          # 更新分区表
+          sudo partx -u "${LOOP}p2" || true
+          sudo partx -u "$LOOP" || true
+
+          # 文件系统检测与同步
+          sudo e2fsck -f -y "${LOOP}p2"
+          sudo resize2fs "${LOOP}p2"
+
+          # 卸载
+          sudo partx -d "$LOOP" || true
+          sudo losetup -d "$LOOP"
+
+      - name: Compress image
+        run: |
+          gzip -9 "${{ steps.vars.outputs.file }}"
+          ls -lh "${{ steps.vars.outputs.file }}.gz"
+          mv "${{ steps.vars.outputs.file }}.gz" "${{ steps.vars.outputs.out }}"
+
+      - name: Delete existing release (same tag)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.vars.outputs.version }}"
+          echo "删除已存在的 tag/release: $TAG"
+          gh release delete "$TAG" --yes --cleanup-tag || true
+
+      - name: Create release and upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.vars.outputs.version }}"
+          gh release create "$TAG" \
+            "${{ steps.vars.outputs.out }}" \
+            --title "OpenWrt ${{ steps.vars.outputs.version }} (x86-64, +${{ steps.vars.outputs.size }}MB)" \
+            --notes "OpenWrt ${{ steps.vars.outputs.version }} x86-64 ext4-combined 镜像，扩容 ${{ steps.vars.outputs.size }}MB。
+
+          - 架构: x86-64
+          - 版本: ${{ steps.vars.outputs.version }}
+          - 扩容: ${{ steps.vars.outputs.size }}MB
+          - 下载源: ${{ github.event.inputs.mirror }}
+
+          文件: \`${{ steps.vars.outputs.out }}\`
+
+          使用方法: 解压后写入磁盘/U盘。
+          \`\`\`
+          gzip -d ${{ steps.vars.outputs.out }}
+          dd if=${{ steps.vars.outputs.file }} of=/dev/sdX bs=1M
+          \`\`\`"

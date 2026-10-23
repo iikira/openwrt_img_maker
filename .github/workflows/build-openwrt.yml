@@ -67,8 +67,8 @@ jobs:
           set -euo pipefail
           IMG="${{ steps.vars.outputs.file }}"
 
-          # 挂载镜像到 loop 设备
-          LOOP=$(losetup -f --show "$IMG")
+          # 挂载镜像到 loop 设备 (需要 sudo 才能设置 loop 设备)
+          LOOP=$(sudo losetup -f --show "$IMG")
           echo "LOOP=$LOOP"
           # 加载分区信息
           sudo partx -a "$LOOP" || true
